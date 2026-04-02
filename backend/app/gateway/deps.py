@@ -46,6 +46,9 @@ async def langgraph_runtime(app: FastAPI) -> AsyncGenerator[None, None]:
         # Initialize run event store based on config
         app.state.run_event_store = _make_run_event_store(config)
 
+        # Initialize feedback repository (None when no DB engine)
+        app.state.feedback_repo = _make_feedback_repo()
+
         # RunManager with store backing for persistence
         app.state.run_manager = RunManager(store=app.state.run_store)
 
@@ -72,6 +75,18 @@ def _make_run_store() -> RunStore:
     from deerflow.runtime.runs.store.memory import MemoryRunStore
 
     return MemoryRunStore()
+
+
+def _make_feedback_repo():
+    """Create a FeedbackRepository if DB engine is available, else None."""
+    from deerflow.persistence.engine import get_session_factory
+
+    sf = get_session_factory()
+    if sf is not None:
+        from deerflow.persistence.repositories.feedback_repo import FeedbackRepository
+
+        return FeedbackRepository(sf)
+    return None
 
 
 def _make_run_event_store(config) -> RunEventStore:
@@ -121,6 +136,14 @@ def get_run_event_store(request: Request) -> RunEventStore:
     if store is None:
         raise HTTPException(status_code=503, detail="Run event store not available")
     return store
+
+
+def get_feedback_repo(request: Request):
+    """Return the FeedbackRepository, or 503 if not available."""
+    repo = getattr(request.app.state, "feedback_repo", None)
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Feedback not available")
+    return repo
 
 
 def get_run_store(request: Request) -> RunStore:

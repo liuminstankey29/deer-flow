@@ -47,6 +47,7 @@ async def run_agent(
     interrupt_after: list[str] | Literal["*"] | None = None,
     event_store: Any | None = None,
     run_events_config: Any | None = None,
+    follow_up_to_run_id: str | None = None,
 ) -> None:
     """Execute an agent in the background, publishing events to *bridge*."""
 
@@ -69,12 +70,16 @@ async def run_agent(
         # Write human_message event
         user_input = _extract_user_input(graph_input)
         if user_input:
+            msg_metadata = {}
+            if follow_up_to_run_id:
+                msg_metadata["follow_up_to_run_id"] = follow_up_to_run_id
             await event_store.put(
                 thread_id=thread_id,
                 run_id=run_id,
                 event_type="human_message",
                 category="message",
                 content=user_input,
+                metadata=msg_metadata or None,
             )
             journal.set_first_human_message(user_input)
 

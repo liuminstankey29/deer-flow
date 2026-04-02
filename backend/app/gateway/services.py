@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import HTTPException, Request
 from langchain_core.messages import HumanMessage
 
-from app.gateway.deps import get_checkpointer, get_run_event_store, get_run_manager, get_store, get_stream_bridge
+from app.gateway.deps import get_checkpointer, get_run_event_store, get_run_manager, get_run_store, get_store, get_stream_bridge
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -274,6 +274,17 @@ async def start_run(
     if store is not None:
         await _upsert_thread_in_store(store, thread_id, body.metadata)
 
+    # Resolve follow_up_to_run_id: explicit from request, or auto-detect from latest successful run
+    follow_up_to_run_id = getattr(body, "follow_up_to_run_id", None)
+    if follow_up_to_run_id is None:
+        run_store = get_run_store(request)
+        try:
+            recent_runs = await run_store.list_by_thread(thread_id, limit=1)
+            if recent_runs and recent_runs[0].get("status") == "success":
+                follow_up_to_run_id = recent_runs[0]["run_id"]
+        except Exception:
+            pass  # Don't block run creation
+
     agent_factory = resolve_agent_factory(body.assistant_id)
     graph_input = normalize_input(body.input)
     config = build_run_config(thread_id, body.config, body.metadata, assistant_id=body.assistant_id)
@@ -295,6 +306,7 @@ async def start_run(
             interrupt_after=body.interrupt_after,
             event_store=event_store,
             run_events_config=run_events_config,
+            follow_up_to_run_id=follow_up_to_run_id,
         )
     )
     record.task = task
