@@ -63,7 +63,7 @@ export function MessageListItem({
         <MessageToolbar
           className={cn(
             isHuman ? "-bottom-9 justify-end" : "-bottom-8",
-            "absolute right-0 left-0 z-20 opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:opacity-100",
+            "absolute right-0 left-0 z-20",
           )}
         >
           <div className="flex gap-1">
