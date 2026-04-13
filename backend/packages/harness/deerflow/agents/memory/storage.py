@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from deerflow.config.agents_config import AGENT_NAME_PATTERN
-from deerflow.config.memory_config import get_memory_config
+from deerflow.config.app_config import AppConfig
 from deerflow.config.paths import get_paths
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ class FileMemoryStorage(MemoryStorage):
             self._validate_agent_name(agent_name)
             return get_paths().agent_memory_file(agent_name)
 
-        config = get_memory_config()
+        config = AppConfig.current().memory
         if config.storage_path:
             p = Path(config.storage_path)
             return p if p.is_absolute() else get_paths().base_dir / p
@@ -177,7 +177,7 @@ def get_memory_storage() -> MemoryStorage:
         if _storage_instance is not None:
             return _storage_instance
 
-        config = get_memory_config()
+        config = AppConfig.current().memory
         storage_class_path = config.storage_class
 
         try:

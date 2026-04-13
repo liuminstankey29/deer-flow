@@ -29,7 +29,7 @@ from deerflow.agents.checkpointer.provider import (
     POSTGRES_INSTALL,
     SQLITE_INSTALL,
 )
-from deerflow.config.app_config import get_app_config
+from deerflow.config.app_config import AppConfig
 from deerflow.runtime.store._sqlite_utils import ensure_sqlite_parent_dir, resolve_sqlite_conn_str
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ async def make_checkpointer() -> AsyncIterator[Checkpointer]:
     Yields an ``InMemorySaver`` when no checkpointer is configured in *config.yaml*.
     """
 
-    config = get_app_config()
+    config = AppConfig.current()
 
     if config.checkpointer is None:
         from langgraph.checkpoint.memory import InMemorySaver

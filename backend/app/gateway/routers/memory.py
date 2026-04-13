@@ -12,7 +12,7 @@ from deerflow.agents.memory.updater import (
     reload_memory_data,
     update_memory_fact,
 )
-from deerflow.config.memory_config import get_memory_config
+from deerflow.config.app_config import AppConfig
 
 router = APIRouter(prefix="/api", tags=["memory"])
 
@@ -311,7 +311,7 @@ async def get_memory_config_endpoint() -> MemoryConfigResponse:
         }
         ```
     """
-    config = get_memory_config()
+    config = AppConfig.current().memory
     return MemoryConfigResponse(
         enabled=config.enabled,
         storage_path=config.storage_path,
@@ -336,7 +336,7 @@ async def get_memory_status() -> MemoryStatusResponse:
     Returns:
         Combined memory configuration and current data.
     """
-    config = get_memory_config()
+    config = AppConfig.current().memory
     memory_data = get_memory_data()
 
     return MemoryStatusResponse(

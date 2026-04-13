@@ -5,6 +5,7 @@ from datetime import datetime
 from functools import lru_cache
 
 from deerflow.config.agents_config import load_agent_soul
+from deerflow.config.app_config import AppConfig
 from deerflow.skills import load_skills
 from deerflow.skills.types import Skill
 from deerflow.subagents import get_available_subagent_names
@@ -518,9 +519,8 @@ def _get_memory_context(agent_name: str | None = None) -> str:
     """
     try:
         from deerflow.agents.memory import format_memory_for_injection, get_memory_data
-        from deerflow.config.memory_config import get_memory_config
 
-        config = get_memory_config()
+        config = AppConfig.current().memory
         if not config.enabled or not config.injection_enabled:
             return ""
 
@@ -576,9 +576,7 @@ def get_skills_prompt_section(available_skills: set[str] | None = None) -> str:
     skills = _get_enabled_skills()
 
     try:
-        from deerflow.config import get_app_config
-
-        config = get_app_config()
+        config = AppConfig.current()
         container_base_path = config.skills.container_path
         skill_evolution_enabled = config.skill_evolution.enabled
     except Exception:
@@ -617,9 +615,7 @@ def get_deferred_tools_prompt_section() -> str:
     from deerflow.tools.builtins.tool_search import get_deferred_registry
 
     try:
-        from deerflow.config import get_app_config
-
-        if not get_app_config().tool_search.enabled:
+        if not AppConfig.current().tool_search.enabled:
             return ""
     except Exception:
         return ""
@@ -635,9 +631,7 @@ def get_deferred_tools_prompt_section() -> str:
 def _build_acp_section() -> str:
     """Build the ACP agent prompt section, only if ACP agents are configured."""
     try:
-        from deerflow.config.acp_config import get_acp_agents
-
-        agents = get_acp_agents()
+        agents = AppConfig.current().acp_agents
         if not agents:
             return ""
     except Exception:
@@ -655,9 +649,7 @@ def _build_acp_section() -> str:
 def _build_custom_mounts_section() -> str:
     """Build a prompt section for explicitly configured sandbox mounts."""
     try:
-        from deerflow.config import get_app_config
-
-        mounts = get_app_config().sandbox.mounts or []
+        mounts = AppConfig.current().sandbox.mounts or []
     except Exception:
         logger.exception("Failed to load configured sandbox mounts for the lead-agent prompt")
         return ""
