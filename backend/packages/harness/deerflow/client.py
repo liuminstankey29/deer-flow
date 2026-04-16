@@ -117,6 +117,7 @@ class DeerFlowClient:
         config_path: str | None = None,
         checkpointer=None,
         *,
+        config: AppConfig | None = None,
         model_name: str | None = None,
         thinking_enabled: bool = True,
         subagent_enabled: bool = False,
@@ -131,9 +132,14 @@ class DeerFlowClient:
 
         Args:
             config_path: Path to config.yaml. Uses default resolution if None.
+                Ignored when ``config`` is provided.
             checkpointer: LangGraph checkpointer instance for state persistence.
                 Required for multi-turn conversations on the same thread_id.
                 Without a checkpointer, each call is stateless.
+            config: Optional pre-constructed AppConfig. When provided, it takes
+                precedence over ``config_path`` and no file is read. Enables
+                multi-client isolation: two clients with different configs can
+                coexist in the same process without touching process-global state.
             model_name: Override the default model name from config.
             thinking_enabled: Enable model's extended thinking.
             subagent_enabled: Enable subagent delegation.
@@ -142,9 +148,19 @@ class DeerFlowClient:
             available_skills: Optional set of skill names to make available. If None (default), all scanned skills are available.
             middlewares: Optional list of custom middlewares to inject into the agent.
         """
-        if config_path is not None:
-            AppConfig.init(AppConfig.from_file(config_path))
-        self._app_config = AppConfig.current()
+        # Constructor-captured config: the client owns its AppConfig for its lifetime.
+        # Multiple clients with different configs do not contend.
+        #
+        # Priority: explicit ``config=`` > explicit ``config_path=`` > AppConfig.current().
+        # The third tier preserves backward compatibility with callers that relied on
+        # the process-global (tests via the conftest autouse fixture). After P2-10
+        # removes AppConfig.current(), this fallback will require an explicit choice.
+        if config is not None:
+            self._app_config = config
+        elif config_path is not None:
+            self._app_config = AppConfig.from_file(config_path)
+        else:
+            self._app_config = AppConfig.current()
 
         if agent_name is not None and not AGENT_NAME_PATTERN.match(agent_name):
             raise ValueError(f"Invalid agent name '{agent_name}'. Must match pattern: {AGENT_NAME_PATTERN.pattern}")
@@ -173,9 +189,13 @@ class DeerFlowClient:
         self._agent_config_key = None
 
     def _reload_config(self) -> None:
-        """Reload config from file and refresh the cached reference."""
-        AppConfig.init(AppConfig.from_file())
-        self._app_config = AppConfig.current()
+        """Reload config from file and refresh the cached reference.
+
+        Only the client's own ``_app_config`` is rebuilt. Other clients
+        and the process-global are untouched, so multi-client coexistence
+        survives reload.
+        """
+        self._app_config = AppConfig.from_file()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -821,7 +841,7 @@ class DeerFlowClient:
             Dict with "mcp_servers" key mapping server name to config,
             matching the Gateway API ``McpConfigResponse`` schema.
         """
-        ext = AppConfig.current().extensions
+        ext = self._app_config.extensions
         return {"mcp_servers": {name: server.model_dump() for name, server in ext.mcp_servers.items()}}
 
     def update_mcp_config(self, mcp_servers: dict[str, dict]) -> dict:
@@ -844,7 +864,7 @@ class DeerFlowClient:
         if config_path is None:
             raise FileNotFoundError("Cannot locate extensions_config.json. Set DEER_FLOW_EXTENSIONS_CONFIG_PATH or ensure it exists in the project root.")
 
-        current_ext = AppConfig.current().extensions
+        current_ext = self._app_config.extensions
 
         config_data = {
             "mcpServers": mcp_servers,
@@ -856,7 +876,7 @@ class DeerFlowClient:
         self._agent = None
         self._agent_config_key = None
         self._reload_config()
-        reloaded = AppConfig.current().extensions
+        reloaded = self._app_config.extensions
         return {"mcp_servers": {name: server.model_dump() for name, server in reloaded.mcp_servers.items()}}
 
     # ------------------------------------------------------------------
@@ -910,7 +930,7 @@ class DeerFlowClient:
         if config_path is None:
             raise FileNotFoundError("Cannot locate extensions_config.json. Set DEER_FLOW_EXTENSIONS_CONFIG_PATH or ensure it exists in the project root.")
 
-        ext = AppConfig.current().extensions
+        ext = self._app_config.extensions
         ext.skills[name] = SkillStateConfig(enabled=enabled)
 
         config_data = {
@@ -1005,7 +1025,7 @@ class DeerFlowClient:
         Returns:
             Memory config dict.
         """
-        config = AppConfig.current().memory
+        config = self._app_config.memory
         return {
             "enabled": config.enabled,
             "storage_path": config.storage_path,
