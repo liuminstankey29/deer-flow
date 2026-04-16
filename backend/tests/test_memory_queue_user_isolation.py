@@ -1,7 +1,19 @@
 """Tests for user_id propagation through memory queue."""
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deerflow.agents.memory.queue import ConversationContext, MemoryUpdateQueue
+from deerflow.config.app_config import AppConfig
+from deerflow.config.memory_config import MemoryConfig
+
+
+@pytest.fixture(autouse=True)
+def _enable_memory(monkeypatch):
+    """Ensure MemoryUpdateQueue.add() doesn't early-return on disabled memory."""
+    config = MagicMock(spec=AppConfig)
+    config.memory = MemoryConfig(enabled=True)
+    monkeypatch.setattr(AppConfig, "current", staticmethod(lambda: config))
 
 
 def test_conversation_context_has_user_id():
