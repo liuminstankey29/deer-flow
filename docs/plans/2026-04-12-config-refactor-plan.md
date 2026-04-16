@@ -239,9 +239,54 @@ Commit: `a934a822`.
 
 # Phase 2: Pure explicit parameter passing
 
-> **Status:** Proposed. Not implemented.
+> **Status:** Partially shipped. Tasks P2-1 through P2-5 merged (explicit-config primitives added alongside `AppConfig.current()` fallbacks). P2-6 through P2-10 remain open — they remove the fallbacks and finish the migration.
+>
 > **Design:** [§8 of the design doc](./2026-04-12-config-refactor-design.md#8-phase-2-pure-explicit-parameter-passing)
+>
 > **Goal:** Delete `AppConfig._global`, `_override`, `init`, `current`, `set_override`, `reset_override`. `AppConfig` becomes a pure Pydantic value object. Every consumer receives config as an explicit parameter.
+
+## Shipped commits
+
+| Commit | Task | Category | What changed |
+|--------|------|----------|--------------|
+| `c45157e0` | P2-1 | infrastructure | `get_config` FastAPI dependency, `app.state.config` populated at startup |
+| `70323e05` | P2-2 | G (Gateway) | 6 routers migrated to `Depends(get_config)`; reload paths dual-write `app.state.config` + `AppConfig.init()` |
+| `f8738d1e` | P2-3 | H (Client) | `DeerFlowClient.__init__(config=...)` captures config locally; multi-client isolation test pins invariant |
+| `23b424e7` | P2-4 | B (Agent construction) | `make_lead_agent`, `_build_middlewares`, `_resolve_model_name`, `build_lead_runtime_middlewares` accept optional `app_config` |
+| `74b7a7ef` | P2-5 (partial) | D (Runtime) | `RunContext` gains `app_config` field; Worker builds `DeerFlowContext` from it; Gateway `deps.get_run_context` populates it. Standalone providers (checkpointer/store/stream_bridge) already accept optional config from Phase 1 |
+
+All five commits preserve backward compatibility by keeping `AppConfig.current()` as a fallback. No caller is broken.
+
+## Deferred tasks (P2-6 through P2-10)
+
+Each remaining task deletes a `AppConfig.current()` call path after migrating the consumers that still use it. They can land incrementally.
+
+### P2-6: Memory subsystem closure-captured config (Category C)
+- Files: `deerflow/agents/memory/{queue,updater,storage}.py` (8 calls)
+- Pattern: `MemoryQueue.__init__(config: MemoryConfig)`, captured in Timer closure so the callback thread has config without consulting any global.
+- Risk: medium — Timer thread runs outside ContextVar scope; closure capture at enqueue time is the only safe path.
+
+### P2-7: Sandbox / skills / factories / tools / community (Categories E+F)
+- Files: ~20 modules, ~35 call sites
+- Pattern: function signature gains `config: AppConfig`; caller threads it down.
+- Risk: low — mechanical. Each file is self-contained.
+
+### P2-8: Test fixtures (Category I)
+- Files: ~18 test files, ~91 `patch.object(AppConfig, "current")` or `_global` mutations
+- Pattern: replace mock with `test_config` fixture returning an `AppConfig`; pass explicitly to function under test.
+- Risk: medium — largest diff. Can land file-by-file.
+
+### P2-9: Simplify `resolve_context()`
+- File: `deerflow/config/deer_flow_context.py`
+- Pattern: remove `AppConfig.current()` fallback; raise on non-`DeerFlowContext` runtime.context.
+- Risk: low — one function. Depends on P2-6/7/8 to not leave dict-context callers.
+
+### P2-10: Delete `AppConfig` lifecycle
+- Files: `config/app_config.py`, `tests/conftest.py`, `tests/test_app_config_reload.py`, `backend/CLAUDE.md`
+- Pattern: grep confirms zero callers of `current()`, `init()`, `set_override()`, `reset_override()`; delete them plus `_global` and `_override`.
+- Risk: high if P2-6/7/8 incomplete — grep gate must be clean.
+
+The detailed task-level step descriptions below were written before Phase 2 was split into shippable chunks. They remain accurate for the work that lies ahead.
 
 ## Rationale
 
