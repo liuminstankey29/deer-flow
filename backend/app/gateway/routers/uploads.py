@@ -56,7 +56,7 @@ def _make_file_sandbox_writable(file_path: os.PathLike[str] | str) -> None:
 
 
 @router.post("", response_model=UploadResponse)
-@require_permission("threads", "write", owner_check=True, require_existing=True)
+@require_permission("threads", "write", owner_check=True, require_existing=False)
 async def upload_files(
     thread_id: str,
     request: Request,

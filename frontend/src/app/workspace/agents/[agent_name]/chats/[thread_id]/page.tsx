@@ -46,7 +46,13 @@ export default function AgentChatPage() {
   const [settings, setSettings] = useThreadSettings(threadId);
 
   const { showNotification } = useNotification();
-  const [thread, sendMessage] = useThreadStream({
+  const {
+    thread,
+    sendMessage,
+    isHistoryLoading,
+    hasMoreHistory,
+    loadMoreHistory,
+  } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
     context: { ...settings.context, agent_name: agent_name },
     onStart: (createdThreadId) => {
@@ -141,6 +147,9 @@ export default function AgentChatPage() {
                 threadId={threadId}
                 thread={thread}
                 paddingBottom={messageListPaddingBottom}
+                hasMoreHistory={hasMoreHistory}
+                loadMoreHistory={loadMoreHistory}
+                isHistoryLoading={isHistoryLoading}
               />
             </div>
 

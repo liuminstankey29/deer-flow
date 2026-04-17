@@ -279,6 +279,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         updated_message = HumanMessage(
             content=f"{files_message}\n\n{original_content}",
             id=last_message.id,
+            name=last_message.name,
             additional_kwargs=last_message.additional_kwargs,
         )
 
