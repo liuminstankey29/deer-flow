@@ -24,5 +24,5 @@ test("ReasoningTrigger default message uses phrasing content", () => {
   );
 
   expect(html).toContain("Thought for a few seconds");
-  expect(html).not.toContain("<button><p>");
+  expect(html).not.toMatch(/<button\b[^>]*>[\s\S]*?<p\b/i);
 });
