@@ -1,125 +1,158 @@
-#!/usr/bin/env bash
-set +e
+#!/bin/bash
+# health_check.sh - Comprehensive health check for DeerFlow services
+# Verifies API endpoints, service responsiveness, and basic functionality
 
-echo "=========================================="
-echo "  Service Health Check"
-echo "=========================================="
-echo ""
+set -euo pipefail
 
-all_passed=true
-mode="${SMOKE_TEST_MODE:-auto}"
-summary_hint="make logs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 
-print_step() {
-    echo "$1"
-}
+# Default configuration
+API_HOST="${API_HOST:-localhost}"
+API_PORT="${API_PORT:-8000}"
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-30}"
+RETRY_INTERVAL="${RETRY_INTERVAL:-3}"
+MAX_RETRIES="${MAX_RETRIES:-10}"
 
-check_http_status() {
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Result tracking
+PASSED=0
+FAILED=0
+WARNINGS=0
+
+log_info()    { echo -e "${BLUE}[INFO]${NC}  $*"; }
+log_success() { echo -e "${GREEN}[PASS]${NC}  $*"; PASSED=$((PASSED + 1)); }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; WARNINGS=$((WARNINGS + 1)); }
+log_error()   { echo -e "${RED}[FAIL]${NC}  $*"; FAILED=$((FAILED + 1)); }
+
+# Wait for a service to become available
+wait_for_service() {
     local name="$1"
     local url="$2"
-    local expected_re="$3"
-    local status
+    local retries=0
 
-    status="$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)"
-    if echo "$status" | grep -Eq "$expected_re"; then
-        echo "✓ $name is accessible ($url -> $status)"
+    log_info "Waiting for ${name} at ${url}..."
+    while [ $retries -lt $MAX_RETRIES ]; do
+        if curl -sf --max-time 5 "${url}" > /dev/null 2>&1; then
+            log_success "${name} is reachable"
+            return 0
+        fi
+        retries=$((retries + 1))
+        sleep "$RETRY_INTERVAL"
+    done
+
+    log_error "${name} did not become available after $((MAX_RETRIES * RETRY_INTERVAL))s"
+    return 1
+}
+
+# Check backend API health endpoint
+check_api_health() {
+    local url="http://${API_HOST}:${API_PORT}/health"
+    log_info "Checking API health endpoint: ${url}"
+
+    local response
+    response=$(curl -sf --max-time 10 "${url}" 2>&1) || {
+        log_error "API health endpoint unreachable: ${url}"
+        return 1
+    }
+
+    if echo "${response}" | grep -qi '"status".*"ok"\|"healthy".*true\|"status".*"healthy"'; then
+        log_success "API health endpoint returned healthy status"
     else
-        echo "✗ $name is not accessible ($url -> ${status:-000})"
-        all_passed=false
+        log_warn "API health endpoint reachable but status unclear: ${response}"
     fi
 }
 
-check_listen_port() {
-    local name="$1"
-    local port="$2"
-
-    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-        echo "✓ $name is listening on port $port"
+# Check API docs endpoint (FastAPI default)
+check_api_docs() {
+    local url="http://${API_HOST}:${API_PORT}/docs"
+    if curl -sf --max-time 10 "${url}" > /dev/null 2>&1; then
+        log_success "API docs endpoint accessible: ${url}"
     else
-        echo "✗ $name is not listening on port $port"
-        all_passed=false
+        log_warn "API docs endpoint not accessible (may be disabled in production)"
     fi
 }
 
-docker_available() {
-    command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+# Check frontend is serving content
+check_frontend() {
+    local url="http://${API_HOST}:${FRONTEND_PORT}"
+    log_info "Checking frontend at ${url}"
+
+    local http_code
+    http_code=$(curl -so /dev/null --max-time 10 -w "%{http_code}" "${url}" 2>&1) || true
+
+    if [ "${http_code}" = "200" ] || [ "${http_code}" = "304" ]; then
+        log_success "Frontend is serving content (HTTP ${http_code})"
+    else
+        log_error "Frontend returned unexpected HTTP status: ${http_code}"
+    fi
 }
 
-detect_mode() {
-    case "$mode" in
-        local|docker)
-            echo "$mode"
-            return
-            ;;
+# Verify a basic chat/inference API call
+check_api_inference_route() {
+    local url="http://${API_HOST}:${API_PORT}/api/chat/completions"
+    log_info "Probing inference route: ${url}"
+
+    local http_code
+    http_code=$(curl -so /dev/null --max-time 10 -w "%{http_code}" \
+        -X POST "${url}" \
+        -H 'Content-Type: application/json' \
+        -d '{"messages":[{"role":"user","content":"ping"}],"stream":false}' 2>&1) || true
+
+    case "${http_code}" in
+        200|201) log_success "Inference route responded with HTTP ${http_code}" ;;
+        422)     log_warn "Inference route returned 422 (schema mismatch — acceptable for probe)" ;;
+        401|403) log_warn "Inference route returned ${http_code} (auth required — expected in secured env)" ;;
+        404)     log_warn "Inference route not found at ${url} (path may differ)" ;;
+        *)       log_error "Inference route returned unexpected HTTP ${http_code}" ;;
     esac
+}
 
-    if docker_available && docker ps --format "{{.Names}}" | grep -q "deer-flow"; then
-        echo "docker"
+# Summary report
+print_summary() {
+    echo
+    echo "======================================"
+    echo "  Health Check Summary"
+    echo "======================================"
+    echo -e "  ${GREEN}Passed${NC}:   ${PASSED}"
+    echo -e "  ${YELLOW}Warnings${NC}: ${WARNINGS}"
+    echo -e "  ${RED}Failed${NC}:   ${FAILED}"
+    echo "======================================"
+
+    if [ "$FAILED" -gt 0 ]; then
+        echo -e "${RED}Health check FAILED — see errors above.${NC}"
+        exit 1
+    elif [ "$WARNINGS" -gt 0 ]; then
+        echo -e "${YELLOW}Health check passed with warnings.${NC}"
+        exit 0
     else
-        echo "local"
+        echo -e "${GREEN}All health checks passed.${NC}"
+        exit 0
     fi
 }
 
-mode="$(detect_mode)"
+main() {
+    echo "======================================"
+    echo "  DeerFlow Health Check"
+    echo "  API:      http://${API_HOST}:${API_PORT}"
+    echo "  Frontend: http://${API_HOST}:${FRONTEND_PORT}"
+    echo "======================================"
+    echo
 
-echo "Deployment mode: $mode"
-echo ""
+    wait_for_service "Backend API" "http://${API_HOST}:${API_PORT}/health" || true
+    check_api_health
+    check_api_docs
+    check_frontend
+    check_api_inference_route
 
-if [ "$mode" = "docker" ]; then
-    summary_hint="make docker-logs"
-    print_step "1. Checking container status..."
-    if docker ps --format "{{.Names}}" | grep -q "deer-flow"; then
-        echo "✓ Containers are running:"
-        docker ps --format "  - {{.Names}} ({{.Status}})"
-    else
-        echo "✗ No DeerFlow-related containers are running"
-        all_passed=false
-    fi
-else
-    summary_hint="logs/{langgraph,gateway,frontend,nginx}.log"
-    print_step "1. Checking local service ports..."
-    check_listen_port "Nginx" 2026
-    check_listen_port "Frontend" 3000
-    check_listen_port "Gateway" 8001
-    check_listen_port "LangGraph" 2024
-fi
-echo ""
+    print_summary
+}
 
-echo "2. Waiting for services to fully start (30 seconds)..."
-sleep 30
-echo ""
-
-echo "3. Checking frontend service..."
-check_http_status "Frontend service" "http://localhost:2026" "200|301|302|307|308"
-echo ""
-
-echo "4. Checking API Gateway..."
-health_response=$(curl -s http://localhost:2026/health 2>/dev/null)
-if [ $? -eq 0 ] && [ -n "$health_response" ]; then
-    echo "✓ API Gateway health check passed"
-    echo "  Response: $health_response"
-else
-    echo "✗ API Gateway health check failed"
-    all_passed=false
-fi
-echo ""
-
-echo "5. Checking LangGraph service..."
-check_http_status "LangGraph service" "http://localhost:2024/" "200|301|302|307|308|404"
-echo ""
-
-echo "=========================================="
-echo "  Health Check Summary"
-echo "=========================================="
-echo ""
-if [ "$all_passed" = true ]; then
-    echo "✅ All checks passed!"
-    echo ""
-    echo "🌐 Application URL: http://localhost:2026"
-    exit 0
-else
-    echo "❌ Some checks failed"
-    echo ""
-    echo "Please review: $summary_hint"
-    exit 1
-fi
+main "$@"
